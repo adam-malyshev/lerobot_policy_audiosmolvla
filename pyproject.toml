@@ -1,0 +1,21 @@
+[project]
+name = "lerobot_policy_audiosmolvla"
+version = "0.1.0"
+dependencies = [
+    # your policy-specific dependencies
+    "lerobot",
+    "pytorch",
+    "lerobot[smolvla]",
+    "lerobot[audio]"
+
+]
+requires-python = ">= 3.11"
+description = "Audio fused smolVLA"
+
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lerobot_policy_my_custom_policy*"]
