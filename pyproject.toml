@@ -4,7 +4,7 @@ version = "0.1.0"
 dependencies = [
     # your policy-specific dependencies
     "lerobot",
-    "pytorch",
+    "torch",
     "lerobot[smolvla]",
     "lerobot[audio]"
 
