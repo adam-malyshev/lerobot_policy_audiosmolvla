@@ -10,10 +10,10 @@ except ImportError:
 
 from .configuration_audiosmolvla import AudioSmolVLAConfig
 from .modeling_audiosmolvla import AudioSmolVLAPolicy
-from .processor_audiosmolvla import make_my_custom_policy_pre_post_processors
+from .processor_audiosmolvla import make_audiosmolvla_pre_post_processors
 
 __all__ = [
     "AudioSmolVLAConfig",
     "AudioSmolVLAPolicy",
-    "make_my_custom_policy_pre_post_processors",
+    "make_audiosmolvla_pre_post_processors",
 ]
