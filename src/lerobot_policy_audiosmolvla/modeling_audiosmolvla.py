@@ -19,14 +19,14 @@ from lerobot.policies.smolvla.modeling_smolvla import (
     pad_vector,
     aloha_gripper_to_angular,
     aloha_gripper_from_angular,
-    aloha_gripper_from_angular_inv
+    aloha_gripper_from_angular_inv,
 )
 from lerobot.utils.constants import (
     ACTION,
     OBS_LANGUAGE_ATTENTION_MASK,
     OBS_LANGUAGE_TOKENS,
     OBS_STATE,
-    OBS_IMAGES
+    OBS_IMAGES,
 )
 from lerobot.policies.utils import populate_queues
 
@@ -59,16 +59,17 @@ class AudioSmolVLAPolicy(SmolVLAPolicy):
         self.config = config
 
         self.model = AudioVLAFlowMatching(config)
-        
+
         self.reset()
 
-
     def prepare_audio(self, batch):
-        """Convert audio to """
+        """Convert audio to"""
         audios = []
         audio_masks = []
         present_audio_keys = [key for key in self.config.audio_features if key in batch]
-        missing_audio_keys = [key for key in self.config.audio_features if key not in batch]
+        missing_audio_keys = [
+            key for key in self.config.audio_features if key not in batch
+        ]
 
         if len(present_audio_keys) == 0:
             raise ValueError(
@@ -110,17 +111,24 @@ class AudioSmolVLAPolicy(SmolVLAPolicy):
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        
+
         audio_list, audio_masks_list = self.prepare_audio(batch)
 
         actions = self.prepare_action(batch)
         actions_is_pad = batch.get("actions_id_pad")
         loss_dict = {}
-        
+
         losses = self.model.forward(
-            images, img_masks, lang_tokens, lang_masks, 
-            audio_list, audio_masks_list, 
-            state, actions, noise, time
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            audio_list,
+            audio_masks_list,
+            state,
+            actions,
+            noise,
+            time,
         )
         loss_dict["losses_after_forward"] = losses.clone()
 
@@ -138,7 +146,9 @@ class AudioSmolVLAPolicy(SmolVLAPolicy):
         loss_dict["loss"] = loss.item()
         return loss, loss_dict
 
-    def _get_action_chunk(self, batch: dict[str, Tensor], noise: Tensor | None = None) -> Tensor:
+    def _get_action_chunk(
+        self, batch: dict[str, Tensor], noise: Tensor | None = None
+    ) -> Tensor:
         for k in batch:
             if k in self._queues and k != ACTION:
                 batch[k] = torch.stack(list(self._queues[k]), dim=1)
@@ -147,13 +157,18 @@ class AudioSmolVLAPolicy(SmolVLAPolicy):
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
-        
+
         audio_list, audio_masks_list = self.prepare_audio(batch)
 
         actions = self.model.sample_actions(
-            images, img_masks, lang_tokens, lang_masks, 
-            audio_list, audio_masks_list, 
-            state, noise=noise
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            audio_list,
+            audio_masks_list,
+            state,
+            noise=noise,
         )
 
         # Unpad actions
@@ -173,11 +188,21 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         tokenizer = self.vlm_with_expert.processor.tokenizer
         vlm_model = self.vlm_with_expert.vlm
 
-        self.audio_start_token_str = AddedToken("<|audio_start|>", normalized=False, special=True, lstrip=False, rstrip=False)
-        self.audio_end_token_str = AddedToken("<|audio_end|>", normalized=False, special=True, lstrip=False, rstrip=False)
-        
+        self.audio_start_token_str = AddedToken(
+            "<|audio_start|>",
+            normalized=False,
+            special=True,
+            lstrip=False,
+            rstrip=False,
+        )
+        self.audio_end_token_str = AddedToken(
+            "<|audio_end|>", normalized=False, special=True, lstrip=False, rstrip=False
+        )
+
         audio_tokens = [self.audio_start_token_str, self.audio_end_token_str]
-        num_added = tokenizer.add_special_tokens({"additional_special_tokens": audio_tokens})
+        num_added = tokenizer.add_special_tokens(
+            {"additional_special_tokens": audio_tokens}
+        )
 
         if num_added > 0:
             vlm_model.resize_token_embeddings(len(tokenizer))
@@ -185,23 +210,27 @@ class AudioVLAFlowMatching(VLAFlowMatching):
                 audio_ref_ids = tokenizer("audio", add_special_tokens=False).input_ids
                 if len(audio_ref_ids) > 0:
                     audio_ref_id = audio_ref_ids[0]
-                    ref_embedding = vlm_model.get_input_embeddings().weight[audio_ref_id]
+                    ref_embedding = vlm_model.get_input_embeddings().weight[
+                        audio_ref_id
+                    ]
                     embedding_layer = vlm_model.get_input_embeddings()
                     embedding_layer.weight[-num_added:] = ref_embedding.clone()
 
         self.audio_start_token_id = tokenizer.convert_tokens_to_ids("<|audio_start|>")
         self.audio_end_token_id = tokenizer.convert_tokens_to_ids("<|audio_end|>")
 
-        self.audio_input_dim = 960 
+        self.audio_input_dim = 960
         self.lm_hidden_size = self.vlm_with_expert.config.text_config.hidden_size
         self.audio_projector = AudioProjector(self.audio_input_dim, self.lm_hidden_size)
-        
-        self.audio_encoder = DyMNMedium(pretrained=True, device=config.device, target_embed_dim=None)
+
+        self.audio_encoder = DyMNMedium(pretrained=True, device=config.device)
         self.audio_encoder.device
 
     def embed_audio(self, audio_spectrogram: torch.Tensor):
-        x = self.audio_encoder(audio_spectrogram)
-        audio_hidden_states = self.audio_projector(x)
+        features = self.audio_encoder(audio_spectrogram)
+        features = features.permute(0, 2, 3, 1)
+        features = features.flatten(1, 2)
+        audio_hidden_states = self.audio_projector(features)
         return audio_hidden_states
 
     def embed_prefix(
@@ -218,18 +247,24 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         embs = []
         pad_masks = []
         att_masks = []
-        
-        for _img_idx, (img, img_mask) in enumerate(zip(images, img_masks, strict=False)):
+
+        for _img_idx, (img, img_mask) in enumerate(
+            zip(images, img_masks, strict=False)
+        ):
             if self.add_image_special_tokens:
                 image_start_token = (
                     self.vlm_with_expert.embed_language_tokens(
-                        self.global_image_start_token.to(device=self.vlm_with_expert.vlm.device)
+                        self.global_image_start_token.to(
+                            device=self.vlm_with_expert.vlm.device
+                        )
                     )
                     .unsqueeze(0)
                     .expand(img.shape[0], -1, -1)
                 )
                 image_start_mask = torch.ones_like(
-                    image_start_token[:, :, 0], dtype=torch.bool, device=image_start_token.device
+                    image_start_token[:, :, 0],
+                    dtype=torch.bool,
+                    device=image_start_token.device,
                 )
                 att_masks += [0] * (image_start_mask.shape[-1])
                 embs.append(image_start_token)
@@ -238,7 +273,9 @@ class AudioVLAFlowMatching(VLAFlowMatching):
             img_emb = self.vlm_with_expert.embed_image(img)
             # Normalize image embeddings
             img_emb_dim = img_emb.shape[-1]
-            img_emb = img_emb * torch.tensor(img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device)
+            img_emb = img_emb * torch.tensor(
+                img_emb_dim**0.5, dtype=img_emb.dtype, device=img_emb.device
+            )
 
             bsize, num_img_embs = img_emb.shape[:2]
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
@@ -256,7 +293,9 @@ class AudioVLAFlowMatching(VLAFlowMatching):
                     .expand(img.shape[0], -1, -1)
                 )
                 image_end_mask = torch.ones_like(
-                    image_end_token[:, :, 0], dtype=torch.bool, device=image_end_token.device
+                    image_end_token[:, :, 0],
+                    dtype=torch.bool,
+                    device=image_end_token.device,
                 )
                 embs.append(image_end_token)
                 pad_masks.append(image_end_mask)
@@ -272,7 +311,7 @@ class AudioVLAFlowMatching(VLAFlowMatching):
                 start_emb = self.vlm_with_expert.embed_language_tokens(
                     torch.tensor([self.audio_start_token_id], device=device)
                 ).expand(bsize, -1, -1)
-                
+
                 end_emb = self.vlm_with_expert.embed_language_tokens(
                     torch.tensor([self.audio_end_token_id], device=device)
                 ).expand(bsize, -1, -1)
@@ -284,7 +323,9 @@ class AudioVLAFlowMatching(VLAFlowMatching):
                 embs.append(audio_emb)
 
                 feat_len = audio_emb.shape[1]
-                full_audio_mask = torch.ones(bsize, feat_len, dtype=torch.bool, device=device)
+                full_audio_mask = torch.ones(
+                    bsize, feat_len, dtype=torch.bool, device=device
+                )
                 pad_masks.append(full_audio_mask)
 
                 att_masks += [0] * feat_len
@@ -300,14 +341,14 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         state_emb = self.state_proj(state)
         state_emb = state_emb[:, None, :] if state_emb.ndim == 2 else state_emb
         embs.append(state_emb)
-        
+
         bsize = state_emb.shape[0]
         device = state_emb.device
         states_seq_len = state_emb.shape[1]
-        
+
         state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
         pad_masks.append(state_mask)
-        att_masks += [1] * (states_seq_len) # State attends to prefix
+        att_masks += [1] * (states_seq_len)  # State attends to prefix
 
         embs = torch.cat(embs, dim=1)
         pad_masks = torch.cat(pad_masks, dim=1)
@@ -325,7 +366,17 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, audio_list, audio_masks_list, state, actions, noise=None, time=None
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        audio_list,
+        audio_masks_list,
+        state,
+        actions,
+        noise=None,
+        time=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         if noise is None:
@@ -337,9 +388,15 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-        
+
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, audio_list, audio_masks_list, state=state
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            audio_list,
+            audio_masks_list,
+            state=state,
         )
         suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
 
@@ -348,7 +405,7 @@ class AudioVLAFlowMatching(VLAFlowMatching):
 
         att_2d_masks = make_att_2d_masks(pad_masks, att_masks)
         position_ids = torch.cumsum(pad_masks, dim=1) - 1
-        
+
         (_, suffix_out), _ = self.vlm_with_expert.forward(
             attention_mask=att_2d_masks,
             position_ids=position_ids,
@@ -363,7 +420,17 @@ class AudioVLAFlowMatching(VLAFlowMatching):
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
-    def sample_actions(self, images, img_masks, lang_tokens, lang_masks, audio_list, audio_masks_list, state, noise=None) -> Tensor:
+    def sample_actions(
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        audio_list,
+        audio_masks_list,
+        state,
+        noise=None,
+    ) -> Tensor:
         """Do a full inference forward and compute the action."""
         bsize = state.shape[0]
         device = state.device
@@ -373,11 +440,17 @@ class AudioVLAFlowMatching(VLAFlowMatching):
             noise = self.sample_noise(actions_shape, device)
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
-            images, img_masks, lang_tokens, lang_masks, audio_list, audio_masks_list, state=state
+            images,
+            img_masks,
+            lang_tokens,
+            lang_masks,
+            audio_list,
+            audio_masks_list,
+            state=state,
         )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
-        
+
         _, past_key_values = self.vlm_with_expert.forward(
             attention_mask=prefix_att_2d_masks,
             position_ids=prefix_position_ids,

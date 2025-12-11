@@ -80,7 +80,7 @@ def make_audiosmolvla_pre_post_processors(
 
 
 @dataclass
-@ProcessorStepRegistry.register(name="audio_processor")
+@ProcessorStepRegistry.register(name="custom_audio_processor")
 class CustomAudioProcessorStep(AudioProcessorStep):
     input_audio_chunk_duration: float = 1.0
     input_sample_rate: int = 44100
